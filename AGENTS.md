@@ -7,7 +7,7 @@ Vision inference skill. Call `examine-image` to get a text description of any im
 ```bash
 examine-image /path/to/image.png
 examine-image --prompt "What does this error message say?" /path/to/screenshot.png
-examine-image --fallback /path/to/image.png   # use qwen3.8:27b on gumon if primary fails
+examine-image --fallback /path/to/image.png   # use fallback model if primary fails
 ```
 
 ## When to use
@@ -18,10 +18,9 @@ examine-image --fallback /path/to/image.png   # use qwen3.8:27b on gumon if prim
 
 ## Defaults
 
-- Primary model: `minimax-m3:cloud` via local Ollama (`127.0.0.1:11434`)
-- Fallback model: `qwen3.8:27b` on `YOUR-HOST.YOUR-TAILNET.ts.net:11434` (Tailscale, no SSH needed)
+Configured via `~/.config/examine-image/config`. Run `examine-image --show-config` to see the resolved settings for this installation.
 
-Use `--fallback` to enable automatic fallback if the primary model fails or is unavailable.
+Use `--fallback` to enable automatic fallback to the configured `FALLBACK_MODEL`/`FALLBACK_HOST` if the primary model fails or is unavailable.
 
 ## Output
 
