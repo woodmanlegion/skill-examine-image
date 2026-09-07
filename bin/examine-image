@@ -4,19 +4,44 @@
 # Usage: examine-image [OPTIONS] <image-path>
 #
 # Options:
-#   --prompt TEXT    Prompt to send with the image (default: describe in detail)
-#   --model MODEL    Ollama model (default: minimax-m3:cloud)
-#   --host URL       Ollama base URL (default: http://127.0.0.1:11434)
-#   --fallback       Try ollama-fallback/qwen3.8:27b if primary fails
-#   --json           Print raw JSON response instead of just the text
+#   --prompt TEXT    Prompt to send with the image
+#   --model MODEL    Ollama model (overrides config)
+#   --host URL       Ollama base URL (overrides config)
+#   --fallback       Try fallback model/host if primary fails
+#   --json           Print raw JSON response
 #   --show-config    Print resolved config and exit
+#
+# Config file: ~/.config/examine-image/config (shell key=value format)
+# Keys: PRIMARY_MODEL, PRIMARY_HOST, FALLBACK_MODEL, FALLBACK_HOST, DEFAULT_PROMPT
+# All keys can also be set via env: EXAMINE_IMAGE_<KEY>
 set -euo pipefail
 
-PROMPT="Describe this image in detail."
-MODEL="${EXAMINE_IMAGE_MODEL:-minimax-m3:cloud}"
-HOST="${EXAMINE_IMAGE_HOST:-http://127.0.0.1:11434}"
-FALLBACK_HOST="http://YOUR-HOST.YOUR-TAILNET.ts.net:11434"
-FALLBACK_MODEL="qwen3.8:27b"
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/examine-image/config"
+
+# Defaults — intentionally minimal, configure via config file
+PRIMARY_MODEL=""
+PRIMARY_HOST="http://127.0.0.1:11434"
+FALLBACK_MODEL=""
+FALLBACK_HOST=""
+DEFAULT_PROMPT="Describe this image in detail."
+
+# Load config file if present
+if [[ -f "$CONFIG_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+fi
+
+# Env var overrides
+PRIMARY_MODEL="${EXAMINE_IMAGE_PRIMARY_MODEL:-${EXAMINE_IMAGE_MODEL:-$PRIMARY_MODEL}}"
+PRIMARY_HOST="${EXAMINE_IMAGE_PRIMARY_HOST:-${EXAMINE_IMAGE_HOST:-$PRIMARY_HOST}}"
+FALLBACK_MODEL="${EXAMINE_IMAGE_FALLBACK_MODEL:-$FALLBACK_MODEL}"
+FALLBACK_HOST="${EXAMINE_IMAGE_FALLBACK_HOST:-$FALLBACK_HOST}"
+DEFAULT_PROMPT="${EXAMINE_IMAGE_DEFAULT_PROMPT:-$DEFAULT_PROMPT}"
+
+# CLI args
+PROMPT="$DEFAULT_PROMPT"
+CLI_MODEL=""
+CLI_HOST=""
 OUTPUT_JSON=0
 USE_FALLBACK=0
 SHOW_CONFIG=0
@@ -25,8 +50,8 @@ IMAGE_PATH=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prompt)    PROMPT="$2"; shift 2 ;;
-    --model)     MODEL="$2"; shift 2 ;;
-    --host)      HOST="$2"; shift 2 ;;
+    --model)     CLI_MODEL="$2"; shift 2 ;;
+    --host)      CLI_HOST="$2"; shift 2 ;;
     --fallback)  USE_FALLBACK=1; shift ;;
     --json)      OUTPUT_JSON=1; shift ;;
     --show-config) SHOW_CONFIG=1; shift ;;
@@ -38,12 +63,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+EFFECTIVE_MODEL="${CLI_MODEL:-$PRIMARY_MODEL}"
+EFFECTIVE_HOST="${CLI_HOST:-$PRIMARY_HOST}"
+
 if [[ "$SHOW_CONFIG" -eq 1 ]]; then
-  echo "model:          $MODEL"
-  echo "host:           $HOST"
-  echo "fallback_host:  $FALLBACK_HOST"
-  echo "fallback_model: $FALLBACK_MODEL"
+  echo "config_file:    ${CONFIG_FILE} $( [[ -f "$CONFIG_FILE" ]] && echo '(found)' || echo '(not found)')"
+  echo "primary_model:  ${EFFECTIVE_MODEL:-(not set)}"
+  echo "primary_host:   $EFFECTIVE_HOST"
+  echo "fallback_model: ${FALLBACK_MODEL:-(not set)}"
+  echo "fallback_host:  ${FALLBACK_HOST:-(not set)}"
+  echo "default_prompt: $DEFAULT_PROMPT"
   exit 0
+fi
+
+if [[ -z "$EFFECTIVE_MODEL" ]]; then
+  echo "ERROR: No model configured. Set PRIMARY_MODEL in $CONFIG_FILE or pass --model." >&2
+  exit 1
 fi
 
 if [[ -z "$IMAGE_PATH" ]]; then
@@ -56,7 +91,6 @@ if [[ ! -f "$IMAGE_PATH" ]]; then
   exit 1
 fi
 
-# Encode image as base64
 B64=$(base64 "$IMAGE_PATH" | tr -d '\n')
 
 call_ollama() {
@@ -66,8 +100,7 @@ call_ollama() {
     "$model" \
     "$(echo "$PROMPT" | sed 's/"/\\"/g')" \
     "$B64")
-
-  curl -sf --max-time 120 "$host/api/generate" \
+  curl -sf --max-time 180 "$host/api/generate" \
     -H "Content-Type: application/json" \
     -d "$payload"
 }
@@ -85,12 +118,11 @@ run() {
     return 0
   fi
 
-  # Extract .response field
   local text
   if command -v jq &>/dev/null; then
     text=$(echo "$resp" | jq -r '.response // empty')
   else
-    text=$(echo "$resp" | grep -o '"response":"[^"]*"' | sed 's/"response":"//;s/"$//' | sed 's/\\n/\n/g')
+    text=$(echo "$resp" | grep -o '"response":"[^"]*"' | sed 's/"response":"//;s/"$//;s/\\n/\n/g')
   fi
 
   if [[ -z "$text" ]]; then
@@ -101,11 +133,15 @@ run() {
   echo "$text"
 }
 
-if run "$HOST" "$MODEL"; then
+if run "$EFFECTIVE_HOST" "$EFFECTIVE_MODEL"; then
   exit 0
 fi
 
 if [[ "$USE_FALLBACK" -eq 1 ]]; then
+  if [[ -z "$FALLBACK_MODEL" || -z "$FALLBACK_HOST" ]]; then
+    echo "ERROR: --fallback requested but FALLBACK_MODEL/FALLBACK_HOST not configured." >&2
+    exit 1
+  fi
   echo "[primary failed, trying fallback: $FALLBACK_MODEL on $FALLBACK_HOST]" >&2
   run "$FALLBACK_HOST" "$FALLBACK_MODEL"
 fi

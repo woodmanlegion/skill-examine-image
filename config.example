@@ -1,0 +1,12 @@
+# examine-image config — copy to ~/.config/examine-image/config
+
+# Primary vision model and Ollama host
+PRIMARY_MODEL=llava:7b
+PRIMARY_HOST=http://127.0.0.1:11434
+
+# Optional fallback (used with --fallback flag)
+FALLBACK_MODEL=
+FALLBACK_HOST=
+
+# Default prompt when none is specified
+DEFAULT_PROMPT=Describe this image in detail.
