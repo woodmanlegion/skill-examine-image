@@ -95,14 +95,18 @@ B64=$(base64 "$IMAGE_PATH" | tr -d '\n')
 
 call_ollama() {
   local host="$1" model="$2"
-  local payload
-  payload=$(printf '{"model":"%s","prompt":"%s","images":["%s"],"stream":false}' \
+  local payload tmpfile
+  payload=$(printf '{ "model":"%s", "prompt":"%s", "images":["%s"], "stream":false }' \
     "$model" \
     "$(echo "$PROMPT" | sed 's/"/\\"/g')" \
     "$B64")
+  # Write payload to a temp file to avoid arg-length limits with large images
+  tmpfile=$(mktemp)
+  printf '%s' "$payload" > "$tmpfile"
   curl -sf --max-time 180 "$host/api/generate" \
     -H "Content-Type: application/json" \
-    -d "$payload"
+    -d @"$tmpfile"
+  rm -f "$tmpfile"
 }
 
 run() {

@@ -9,4 +9,4 @@ FALLBACK_MODEL=
 FALLBACK_HOST=
 
 # Default prompt when none is specified
-DEFAULT_PROMPT=Describe this image in detail.
+DEFAULT_PROMPT="Describe this image in detail."
