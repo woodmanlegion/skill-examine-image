@@ -10,3 +10,8 @@ FALLBACK_HOST=
 
 # Default prompt when none is specified
 DEFAULT_PROMPT="Describe this image in detail."
+
+# Resize images exceeding this size before sending to Ollama
+# ffmpeg required; original file is never modified
+MAX_SIZE_KB=1024
+MAX_DIMENSION=1024

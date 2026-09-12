@@ -12,7 +12,8 @@
 #   --show-config    Print resolved config and exit
 #
 # Config file: ~/.config/examine-image/config (shell key=value format)
-# Keys: PRIMARY_MODEL, PRIMARY_HOST, FALLBACK_MODEL, FALLBACK_HOST, DEFAULT_PROMPT
+# Keys: PRIMARY_MODEL, PRIMARY_HOST, FALLBACK_MODEL, FALLBACK_HOST, DEFAULT_PROMPT,
+#       MAX_SIZE_KB (resize threshold, default 1024), MAX_DIMENSION (longest side, default 1024)
 # All keys can also be set via env: EXAMINE_IMAGE_<KEY>
 set -euo pipefail
 
@@ -24,6 +25,8 @@ PRIMARY_HOST="http://127.0.0.1:11434"
 FALLBACK_MODEL=""
 FALLBACK_HOST=""
 DEFAULT_PROMPT="Describe this image in detail."
+MAX_SIZE_KB=1024
+MAX_DIMENSION=1024
 
 # Load config file if present
 if [[ -f "$CONFIG_FILE" ]]; then
@@ -37,6 +40,8 @@ PRIMARY_HOST="${EXAMINE_IMAGE_PRIMARY_HOST:-${EXAMINE_IMAGE_HOST:-$PRIMARY_HOST}
 FALLBACK_MODEL="${EXAMINE_IMAGE_FALLBACK_MODEL:-$FALLBACK_MODEL}"
 FALLBACK_HOST="${EXAMINE_IMAGE_FALLBACK_HOST:-$FALLBACK_HOST}"
 DEFAULT_PROMPT="${EXAMINE_IMAGE_DEFAULT_PROMPT:-$DEFAULT_PROMPT}"
+MAX_SIZE_KB="${EXAMINE_IMAGE_MAX_SIZE_KB:-$MAX_SIZE_KB}"
+MAX_DIMENSION="${EXAMINE_IMAGE_MAX_DIMENSION:-$MAX_DIMENSION}"
 
 # CLI args
 PROMPT="$DEFAULT_PROMPT"
@@ -73,6 +78,8 @@ if [[ "$SHOW_CONFIG" -eq 1 ]]; then
   echo "fallback_model: ${FALLBACK_MODEL:-(not set)}"
   echo "fallback_host:  ${FALLBACK_HOST:-(not set)}"
   echo "default_prompt: $DEFAULT_PROMPT"
+  echo "max_size_kb:    $MAX_SIZE_KB"
+  echo "max_dimension:  $MAX_DIMENSION"
   exit 0
 fi
 
@@ -91,7 +98,31 @@ if [[ ! -f "$IMAGE_PATH" ]]; then
   exit 1
 fi
 
-B64=$(base64 "$IMAGE_PATH" | tr -d '\n')
+# Resize if image exceeds MAX_SIZE_KB — writes to a temp file, original untouched
+ENCODE_PATH="$IMAGE_PATH"
+RESIZE_TMP=""
+file_kb=$(( $(wc -c < "$IMAGE_PATH") / 1024 ))
+if [[ "$file_kb" -gt "$MAX_SIZE_KB" ]]; then
+  if ! command -v ffmpeg &>/dev/null; then
+    echo "WARNING: Image is ${file_kb}KB (limit ${MAX_SIZE_KB}KB) but ffmpeg not found — sending full size" >&2
+  else
+    RESIZE_TMP=$(mktemp --suffix=.jpg)
+    echo "[examine-image] Resizing ${file_kb}KB image to max ${MAX_DIMENSION}px (limit ${MAX_SIZE_KB}KB)" >&2
+    if ffmpeg -loglevel error -y -i "$IMAGE_PATH" \
+        -vf "scale='if(gt(iw,ih),min(iw,${MAX_DIMENSION}),-2)':'if(gt(iw,ih),-2,min(ih,${MAX_DIMENSION}))'" \
+        -q:v 4 "$RESIZE_TMP"; then
+      ENCODE_PATH="$RESIZE_TMP"
+      resized_kb=$(( $(wc -c < "$RESIZE_TMP") / 1024 ))
+      echo "[examine-image] Resized to ${resized_kb}KB" >&2
+    else
+      echo "WARNING: ffmpeg resize failed — sending full size" >&2
+      rm -f "$RESIZE_TMP"; RESIZE_TMP=""
+    fi
+  fi
+fi
+
+B64=$(base64 "$ENCODE_PATH" | tr -d '\n')
+[[ -n "$RESIZE_TMP" ]] && rm -f "$RESIZE_TMP"
 
 call_ollama() {
   local host="$1" model="$2"
